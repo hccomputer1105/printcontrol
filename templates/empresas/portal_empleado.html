@@ -1,0 +1,124 @@
+{% extends 'base.html' %}
+{% block titulo_pagina %}Mi Portal de Impresión — {{ perfil.usuario_sistema_operativo }}{% endblock %}
+{% block contenido %}
+<div class="row g-4 mb-4">
+    <!-- Tarjeta de Cuotas Mensuales -->
+    <div class="col-md-7">
+        <div class="card border-0 shadow-sm p-4 h-100">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <div>
+                    <h5 class="fw-bold mb-0">📊 Mi Consumo Mensual</h5>
+                    <small class="text-muted">Departamento: <strong>{{ perfil.departamento.nombre|default:"Sin departamento asignado" }}</strong></small>
+                </div>
+                {% if perfil.bloqueado_manualmente %}
+                    <span class="badge bg-danger">Cuenta Bloqueada</span>
+                {% else %}
+                    <span class="badge bg-success">Habilitado para Imprimir</span>
+                {% endif %}
+            </div>
+
+            {% if perfil.limite_total_mensual > 0 %}
+            <div class="mb-3 p-3 bg-light rounded border">
+                <div class="d-flex justify-content-between small fw-bold mb-1">
+                    <span>Cuota General Mixta (B/N + Color)</span>
+                    <span>{{ total_usado_mixto }} / {{ perfil.limite_total_mensual }} págs ({{ pct_mixto }}%)</span>
+                </div>
+                <div class="progress" style="height: 10px;">
+                    <div class="progress-bar {% if pct_mixto >= 90 %}bg-danger{% elif pct_mixto >= 70 %}bg-warning{% else %}bg-info{% endif %}" style="width: {{ pct_mixto }}%;"></div>
+                </div>
+            </div>
+            {% endif %}
+
+            <div class="mb-3">
+                <div class="d-flex justify-content-between small mb-1">
+                    <span>Impresiones Blanco y Negro</span>
+                    <span><strong>{{ perfil.impresiones_bn_mes }}</strong> / {% if perfil.limite_bn_mensual > 0 %}{{ perfil.limite_bn_mensual }} págs{% else %}Ilimitado{% endif %}</span>
+                </div>
+                {% if perfil.limite_bn_mensual > 0 %}
+                <div class="progress" style="height: 8px;">
+                    <div class="progress-bar {% if pct_bn >= 90 %}bg-danger{% else %}bg-dark{% endif %}" style="width: {{ pct_bn }}%;"></div>
+                </div>
+                {% endif %}
+            </div>
+
+            <div class="mb-2">
+                <div class="d-flex justify-content-between small mb-1">
+                    <span>Impresiones a Color</span>
+                    <span><strong>{{ perfil.impresiones_color_mes }}</strong> / {% if perfil.limite_color_mensual > 0 %}{{ perfil.limite_color_mensual }} págs{% else %}Ilimitado{% endif %}</span>
+                </div>
+                {% if perfil.limite_color_mensual > 0 %}
+                <div class="progress" style="height: 8px;">
+                    <div class="progress-bar {% if pct_color >= 90 %}bg-danger{% else %}bg-primary{% endif %}" style="width: {{ pct_color }}%;"></div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Tarjeta de Seguridad: Cambio de PIN y Contraseña -->
+    <div class="col-md-5">
+        <div class="card border-0 shadow-sm p-4 h-100 border-start border-4 border-primary">
+            <h5 class="fw-bold mb-1">🔐 Seguridad y PIN</h5>
+            <p class="small text-muted mb-3">
+                Estado de PIN al imprimir: 
+                {% if perfil.requiere_pin_impresion %}
+                    <span class="badge bg-warning text-dark">Obligatorio</span>
+                {% else %}
+                    <span class="badge bg-secondary">Desactivado</span>
+                {% endif %}
+            </p>
+            <form method="post">
+                {% csrf_token %}
+                <div class="mb-3">
+                    <label class="form-label small fw-bold">Nuevo PIN de Impresión (4 a 6 números)</label>
+                    <input type="password" name="pin_impresion" maxlength="6" pattern="[0-9]{4,6}" class="form-control form-control-sm" placeholder="Ej: 4829">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label small fw-bold">Nueva Contraseña Acceso Web (opcional)</label>
+                    <input type="password" name="nueva_password" class="form-control form-control-sm" placeholder="Mínimo 6 caracteres">
+                </div>
+                <button type="submit" class="btn btn-primary btn-sm w-100">Actualizar Mis Credenciales</button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Historial Personal de Impresiones -->
+<div class="card border-0 shadow-sm p-3">
+    <h6 class="fw-bold mb-3">📄 Mis Últimos Trabajos Enviados</h6>
+    <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle">
+            <thead class="table-light">
+                <tr>
+                    <th>Fecha</th>
+                    <th>Documento</th>
+                    <th>Impresora</th>
+                    <th>Páginas</th>
+                    <th>Tipo</th>
+                    <th>Costo</th>
+                    <th>Estado</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for reg in mis_trabajos %}
+                <tr>
+                    <td class="small">{{ reg.fecha_impresion|date:"d/m/Y H:i" }}</td>
+                    <td>{{ reg.nombre_documento }}</td>
+                    <td class="small">{{ reg.impresora.nombre_cola|default:"-" }}</td>
+                    <td>{{ reg.paginas }}</td>
+                    <td>{{ reg.tipo_impresion }}</td>
+                    <td>${{ reg.costo_total|floatformat:2 }}</td>
+                    <td>
+                        {% if reg.estado == 'IMPRESO' %}<span class="badge bg-success">Impreso</span>
+                        {% elif reg.estado == 'ESPERANDO_PIN' %}<span class="badge bg-warning text-dark">Esperando PIN</span>
+                        {% else %}<span class="badge bg-danger">{{ reg.get_estado_display }}</span>{% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="7" class="text-center text-muted py-3">Aún no has enviado documentos a imprimir.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

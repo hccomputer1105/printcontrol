@@ -1,0 +1,101 @@
+{% extends 'base.html' %}
+{% block titulo_pagina %}Control de Impresión por Departamento{% endblock %}
+{% block contenido %}
+<div class="row g-4">
+    <div class="col-md-4">
+        <!-- Crear Departamento -->
+        <div class="card border-0 shadow-sm p-3">
+            <h6 class="fw-bold mb-3">Crear Nuevo Departamento</h6>
+            <form method="post">
+                {% csrf_token %}
+                <div class="mb-2">
+                    <label class="form-label small">Nombre del Área / Depto</label>
+                    <input type="text" name="nombre" class="form-control form-control-sm" placeholder="Ej: Contabilidad, Ventas..." required>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small">Límite Mensual Depto B/N (0 = ilimitado)</label>
+                    <input type="number" name="limite_bn_mensual" value="2000" min="0" class="form-control form-control-sm" required>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label small">Límite Mensual Depto Color (0 = ilimitado)</label>
+                    <input type="number" name="limite_color_mensual" value="500" min="0" class="form-control form-control-sm" required>
+                </div>
+                <button type="submit" class="btn btn-primary btn-sm w-100">Guardar Departamento</button>
+            </form>
+        </div>
+
+        <!-- Configurar Tarifas por Página ($) -->
+       <!-- Configurar Tarifas y Reglas Inteligentes -->
+        {% if empresa_destino %}
+        <div class="card border-0 shadow-sm p-3 mt-3 border-start border-4 border-success">
+            <h6 class="fw-bold mb-2">💲 Tarifas y Reglas Inteligentes ({{ empresa_destino.nombre }})</h6>
+            <form action="{% url 'actualizar_tarifas' %}" method="post">
+                {% csrf_token %}
+                <input type="hidden" name="empresa_id" value="{{ empresa_destino.id }}">
+                <div class="mb-2">
+                    <label class="form-label small">Costo Hoja Blanco y Negro ($)</label>
+                    <input type="number" step="0.0001" name="costo_pagina_bn" value="{{ empresa_destino.costo_pagina_bn|stringformat:'f' }}" class="form-control form-control-sm" required>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small">Costo Hoja a Color ($)</label>
+                    <input type="number" step="0.0001" name="costo_pagina_color" value="{{ empresa_destino.costo_pagina_color|stringformat:'f' }}" class="form-control form-control-sm" required>
+                </div>
+                <hr class="my-2">
+                <div class="mb-2">
+                    <label class="form-label small fw-bold">Máx. Páginas por Trabajo (0 = sin límite)</label>
+                    <input type="number" min="0" name="max_paginas_por_trabajo" value="{{ empresa_destino.max_paginas_por_trabajo }}" class="form-control form-control-sm" required>
+                </div>
+                <div class="form-check mb-3">
+                    <input class="form-check-input" type="checkbox" name="bloquear_color_web_correo" id="reglaColorWeb" {% if empresa_destino.bloquear_color_web_correo %}checked{% endif %}>
+                    <label class="form-check-label small" for="reglaColorWeb">
+                        Bloquear impresión a <strong>Color</strong> en correos y navegadores web
+                    </label>
+                </div>
+                <button type="submit" class="btn btn-success btn-sm w-100">Guardar Tarifas y Reglas</button>
+            </form>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Tabla de Departamentos -->
+    <div class="col-md-8">
+        <div class="card border-0 shadow-sm p-3">
+            <h6 class="fw-bold mb-3">Cuotas y Consumo por Departamento</h6>
+            <table class="table table-hover align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th>Departamento</th>
+                        <th>Miembros</th>
+                        <th>Consumo B/N</th>
+                        <th>Consumo Color</th>
+                        <th>Estado</th>
+                        <th>Acciones</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for d in departamentos %}
+                    <tr>
+                        <td><strong>{{ d.nombre }}</strong></td>
+                        <td><span class="badge bg-light text-dark">{{ d.miembros.count }} usuarios</span></td>
+                        <td>{{ d.impresiones_bn_mes }} / <strong>{{ d.limite_bn_mensual }}</strong></td>
+                        <td>{{ d.impresiones_color_mes }} / <strong>{{ d.limite_color_mensual }}</strong></td>
+                        <td>
+                            {% if d.bloqueado %}<span class="badge bg-danger">Bloqueado</span>
+                            {% else %}<span class="badge bg-success">Activo</span>{% endif %}
+                        </td>
+                        <td>
+                            <a href="{% url 'alternar_bloqueo_departamento' d.id %}" class="btn btn-sm {% if d.bloqueado %}btn-success{% else %}btn-danger{% endif %}">
+                                {% if d.bloqueado %}Activar{% else %}Bloquear{% endif %}
+                            </a>
+                            <a href="{% url 'reiniciar_cuota_departamento' d.id %}" class="btn btn-sm btn-outline-secondary">Reiniciar</a>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="6" class="text-center text-muted py-3">No hay departamentos creados aún.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body { font-family: Helvetica, Arial, sans-serif; font-size: 10px; color: #333; }
+        h2 { color: #1e293b; margin-bottom: 4px; }
+        .resumen { background: #f1f5f9; padding: 8px; margin-bottom: 12px; border: 1px solid #cbd5e1; }
+        table { width: 100%; border-collapse: collapse; }
+        th { background: #1e293b; color: white; padding: 6px; text-align: left; }
+        td { border-bottom: 1px solid #ddd; padding: 5px; }
+    </style>
+</head>
+<body>
+    <h2>Reporte de Auditoría de Impresión</h2>
+    <p><strong>Empresa:</strong> {% if empresa %}{{ empresa.nombre }}{% else %}Reporte Global{% endif %} | <strong>Generado:</strong> {{ fecha_generacion|date:"d/m/Y H:i" }}</p>
+    
+    <div class="resumen">
+        <strong>Total B/N:</strong> {{ total_bn }} págs &nbsp;|&nbsp;
+        <strong>Total Color:</strong> {{ total_color }} págs &nbsp;|&nbsp;
+        <strong>Gasto Total:</strong> ${{ costo_total|floatformat:2 }} &nbsp;|&nbsp;
+        <strong>Registros:</strong> {{ registros|length }}
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Fecha</th>
+                <th>Usuario</th>
+                <th>PC</th>
+                <th>Impresora</th>
+                <th>Documento</th>
+                <th>Págs</th>
+                <th>Tipo</th>
+                <th>Costo</th>
+                <th>Estado</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in registros %}
+            <tr>
+                <td>{{ r.fecha_impresion|date:"d/m/Y H:i" }}</td>
+                <td>{{ r.usuario_so }}</td>
+                <td>{{ r.equipo.nombre_host }}</td>
+                <td>{{ r.impresora.nombre_cola }}</td>
+                <td>{{ r.nombre_documento }}</td>
+                <td>{{ r.paginas }}</td>
+                <td>{{ r.tipo_impresion }}</td>
+                <td>${{ r.costo_total|floatformat:2 }}</td>
+                <td>{{ r.get_estado_display }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</body>
+</html>

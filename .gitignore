@@ -1,0 +1,24 @@
+# Entornos virtuales y caché de Python
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Bases de datos locales y caché offline del agente
+*.sqlite3
+*.db
+
+# Archivos compilados de PyInstaller e Inno Setup
+build/
+dist/
+*.spec
+instalador_final/
+
+# Configuraciones sensibles locales (opcional si quieres proteger tu token local)
+agente_pc/config.ini
+
+# Archivos de sistema y editores
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

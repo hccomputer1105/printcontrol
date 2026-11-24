@@ -1,0 +1,73 @@
+{% extends 'base.html' %}
+{% block titulo_pagina %}Reportes y Auditoría de Impresión{% endblock %}
+{% block contenido %}
+<div class="card border-0 shadow-sm p-3 mb-4">
+    <form method="get" class="row g-2 align-items-end">
+        <div class="col-md-3">
+            <label class="form-label small">Usuario PC</label>
+            <input type="text" name="usuario" value="{{ usuario }}" class="form-control form-control-sm" placeholder="Ej: hreyes">
+        </div>
+        <div class="col-md-3">
+            <label class="form-label small">Impresora</label>
+            <select name="impresora" class="form-select form-select-sm">
+                <option value="">Todas</option>
+                {% for imp in impresoras_lista %}
+                    <option value="{{ imp.id }}" {% if impresora_id == imp.id|stringformat:"s" %}selected{% endif %}>{{ imp.nombre_cola }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-2">
+            <label class="form-label small">Desde</label>
+            <input type="date" name="fecha_inicio" value="{{ fecha_inicio }}" class="form-control form-control-sm">
+        </div>
+        <div class="col-md-2">
+            <label class="form-label small">Hasta</label>
+            <input type="date" name="fecha_fin" value="{{ fecha_fin }}" class="form-control form-control-sm">
+        </div>
+        <div class="col-md-2 d-flex gap-1">
+            <button type="submit" class="btn btn-primary btn-sm w-50">Filtrar</button>
+            <button type="submit" name="exportar" value="pdf" class="btn btn-danger btn-sm w-50">📥 PDF</button>
+        </div>
+    </form>
+</div>
+
+<div class="card border-0 shadow-sm p-3">
+    <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle">
+            <thead class="table-light">
+                <tr>
+                    <th>Fecha</th>
+                    <th>Usuario</th>
+                    <th>Equipo</th>
+                    <th>Impresora</th>
+                    <th>Documento</th>
+                    <th>Págs</th>
+                    <th>Tipo</th>
+                    <th>Costo ($)</th>
+                    <th>Estado</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for reg in registros %}
+                <tr>
+                    <td class="small">{{ reg.fecha_impresion|date:"d/m/Y H:i" }}</td>
+                    <td><strong>{{ reg.usuario_so }}</strong></td>
+                    <td class="small">{{ reg.equipo.nombre_host }}</td>
+                    <td class="small">{{ reg.impresora.nombre_cola }}</td>
+                    <td>{{ reg.nombre_documento }}</td>
+                    <td>{{ reg.paginas }}</td>
+                    <td>{{ reg.tipo_impresion }}</td>
+                    <td><strong>${{ reg.costo_total|floatformat:2 }}</strong></td>
+                    <td>
+                        {% if reg.estado == 'IMPRESO' %}<span class="badge bg-success">Impreso</span>
+                        {% else %}<span class="badge bg-danger">{{ reg.get_estado_display }}</span>{% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="9" class="text-center text-muted py-3">Sin resultados para los filtros seleccionados.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

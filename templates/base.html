@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>PrintControl - Monitoreo y Licencias</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { min-height: 100vh; display: flex; flex-direction: column; }
+        .wrapper { display: flex; flex: 1; }
+        .sidebar { width: 250px; background: #1e293b; color: #fff; min-height: 100vh; }
+        .sidebar a { color: #cbd5e1; text-decoration: none; padding: 12px 20px; display: block; border-left: 4px solid transparent; }
+        .sidebar a:hover, .sidebar a.active { background: #334155; color: #fff; border-left-color: #38bdf8; }
+        .content { flex: 1; background: #f8fafc; }
+    </style>
+</head>
+<body>
+
+<div class="wrapper">
+    <!-- MENÚ LATERAL IZQUIERDO -->
+    <div class="sidebar d-flex flex-column justify-content-between">
+        <div>
+            <div class="p-3 border-bottom border-secondary">
+                <h5 class="mb-0 fw-bold text-info">🖨️ PrintControl</h5>
+                <small class="text-light">{% if empresa %}{{ empresa.nombre }}{% else %}Administración Global{% endif %}</small>
+            </div>
+            <nav class="mt-3">
+            {% if user.perfil.rol == 'EMPLEADO' %}
+                <a href="{% url 'portal_empleado' %}" class="{% if seccion_activa == 'mi_portal' %}active{% endif %}">👤 Mi Consumo y PIN</a>
+            {% else %}
+                <a href="{% url 'dashboard' %}" class="{% if seccion_activa == 'dashboard' %}active{% endif %}">📊 Resumen General</a>
+                <a href="{% url 'lista_impresoras' %}" class="{% if seccion_activa == 'impresoras' %}active{% endif %}">🖨️ Impresoras Detectadas</a>
+                <a href="{% url 'lista_copias' %}" class="{% if seccion_activa == 'copias' %}active{% endif %}">📑 Copias Físicas</a>
+                <a href="{% url 'gestionar_departamentos' %}" class="{% if seccion_activa == 'departamentos' %}active{% endif %}">🏢 Departamentos</a>
+                <a href="{% url 'gestionar_usuarios' %}" class="{% if seccion_activa == 'usuarios' %}active{% endif %}">👥 Usuarios y Cuotas</a>
+                <a href="{% url 'reportes_vista' %}" class="{% if seccion_activa == 'reportes' %}active{% endif %}">📄 Reportes y PDF</a>
+                {% if user.perfil %}
+                    <a href="{% url 'portal_empleado' %}" class="{% if seccion_activa == 'mi_portal' %}active{% endif %}">👤 Mi Consumo y PIN</a>
+                {% endif %}
+                {% if user.is_superuser %}
+                    <hr class="border-secondary mx-3">
+                    <a href="{% url 'gestionar_licencias' %}" class="{% if seccion_activa == 'licencias' %}active{% endif %}">🔑 Empresas y Licencias</a>
+                {% endif %}
+            {% endif %}
+
+            </nav>
+        </div>
+
+        <!-- INDICADOR DE TIEMPO DE LICENCIA -->
+        <div class="p-3 border-top border-secondary">
+            {% if empresa %}
+                <div class="p-2 rounded {% if dias_restantes <= 30 %}bg-danger{% else %}bg-dark{% endif %} small">
+                    <div class="fw-bold">⏳ Licencia Activa</div>
+                    <div>Quedan: <strong>{{ dias_restantes }} días</strong></div>
+                    <div class="text-muted" style="font-size: 0.75rem;">Vence: {{ empresa.fecha_vencimiento|date:"d/m/Y" }}</div>
+                </div>
+            {% else %}
+                <span class="badge bg-info text-dark w-100">Licencia SuperAdmin</span>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- CONTENIDO PRINCIPAL -->
+    <div class="content">
+        <nav class="navbar navbar-light bg-white border-bottom px-4 justify-content-between">
+            <span class="fw-bold text-secondary">{% block titulo_pagina %}Panel de Control{% endblock %}</span>
+            <div class="d-flex align-items-center">
+                <span class="me-3 small text-muted">Usuario: <strong>{{ request.user.username }}</strong></span>
+                <form action="{% url 'logout' %}" method="post" class="d-inline">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-outline-danger btn-sm">Cerrar Sesión</button>
+                </form>
+            </div>
+        </nav>
+
+        <div class="p-4">
+            {% if messages %}
+                {% for msg in messages %}
+                    <div class="alert alert-info py-2">{{ msg }}</div>
+                {% endfor %}
+            {% endif %}
+            {% block contenido %}{% endblock %}
+        </div>
+    </div>
+</div>
+
+</body>
+</html>

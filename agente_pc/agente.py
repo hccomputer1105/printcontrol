@@ -4,6 +4,7 @@ import sys
 import json
 import time
 import socket
+import logging
 import sqlite3
 import platform
 import configparser
@@ -12,7 +13,6 @@ import tkinter as tk
 from tkinter import simpledialog, messagebox
 from pysnmp.hlapi import *
 
-# Detectar Sistema Operativo
 SISTEMA_OPERATIVO = platform.system().upper()
 
 if SISTEMA_OPERATIVO == 'WINDOWS':
@@ -20,23 +20,13 @@ if SISTEMA_OPERATIVO == 'WINDOWS':
 elif SISTEMA_OPERATIVO == 'LINUX':
     import cups
 
-# Ruta real compatible con .py y .exe
+# Ruta base compatible con .py y .exe
 if getattr(sys, 'frozen', False):
     RUTA_BASE = os.path.dirname(sys.executable)
 else:
     RUTA_BASE = os.path.dirname(os.path.abspath(__file__))
 
-config = configparser.ConfigParser()
-config.read(os.path.join(RUTA_BASE, 'config.ini'))
-
-URL_BASE = config['SERVIDOR']['url_base'].rstrip('/')
-TOKEN_API = config['SERVIDOR']['token_api']
-INTERVALO_SYNC = int(config['SERVIDOR'].get('intervalo_sincronizacion', 60))
-
-NOMBRE_HOST = socket.gethostname()
-IP_LOCAL = socket.gethostbyname(NOMBRE_HOST)
-
-# Guardar la base SQLite en una carpeta con permisos de escritura garantizados
+# Carpeta de datos con permisos de escritura garantizados
 if SISTEMA_OPERATIVO == 'WINDOWS':
     DIR_DATOS = os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'PrintControl')
 else:
@@ -44,6 +34,31 @@ else:
 
 os.makedirs(DIR_DATOS, exist_ok=True)
 RUTA_DB_OFFLINE = os.path.join(DIR_DATOS, 'cache_offline.db')
+RUTA_LOG = os.path.join(DIR_DATOS, 'agente.log')
+
+logging.basicConfig(
+    filename=RUTA_LOG,
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s'
+)
+
+config = configparser.ConfigParser()
+ruta_ini = os.path.join(RUTA_BASE, 'config.ini')
+if not os.path.exists(ruta_ini):
+    logging.error(f"No se encontró config.ini en {ruta_ini}")
+
+config.read(ruta_ini)
+URL_BASE = config.get('SERVIDOR', 'url_base', fallback='http://127.0.0.1:8000').strip().rstrip('/')
+if not URL_BASE.startswith('http'):
+    URL_BASE = f"http://{URL_BASE}"
+TOKEN_API = config.get('SERVIDOR', 'token_api', fallback='').strip()
+INTERVALO_SYNC = int(config.get('SERVIDOR', 'intervalo_sincronizacion', fallback='30'))
+
+NOMBRE_HOST = socket.gethostname()
+try:
+    IP_LOCAL = socket.gethostbyname(NOMBRE_HOST)
+except Exception:
+    IP_LOCAL = '127.0.0.1'
 
 trabajos_procesados = set()
 
@@ -57,9 +72,7 @@ def inicializar_db_offline():
         clave TEXT PRIMARY KEY,
         valor TEXT
     )''')
-    # Recrear tabla usuarios_cache para asegurar la columna limite_total
-    c.execute('DROP TABLE IF EXISTS usuarios_cache')
-    c.execute('''CREATE TABLE usuarios_cache (
+    c.execute('''CREATE TABLE IF NOT EXISTS usuarios_cache (
         usuario_so TEXT PRIMARY KEY,
         bloqueado INTEGER,
         requiere_pin INTEGER,
@@ -74,6 +87,12 @@ def inicializar_db_offline():
         depto_limite_color INTEGER,
         depto_usado_color INTEGER
     )''')
+    # Verificar si falta la columna limite_total en instalaciones previas
+    c.execute("PRAGMA table_info(usuarios_cache)")
+    columnas = [col[1] for col in c.fetchall()]
+    if 'limite_total' not in columnas:
+        c.execute("ALTER TABLE usuarios_cache ADD COLUMN limite_total INTEGER DEFAULT 0")
+
     c.execute('''CREATE TABLE IF NOT EXISTS cola_pendiente (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         payload_json TEXT
@@ -88,7 +107,11 @@ def guardar_cache_offline(reglas_empresa, usuarios):
     c.execute("REPLACE INTO config_cache (clave, valor) VALUES ('reglas', ?)", (json.dumps(reglas_empresa),))
     c.execute("DELETE FROM usuarios_cache")
     for u in usuarios:
-        c.execute('''INSERT INTO usuarios_cache VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''', (
+        c.execute('''INSERT INTO usuarios_cache (
+            usuario_so, bloqueado, requiere_pin, pin, limite_total,
+            limite_bn, usado_bn, limite_color, usado_color,
+            depto_limite_bn, depto_usado_bn, depto_limite_color, depto_usado_color
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''', (
             u['usuario_so'], int(u['bloqueado']), int(u['requiere_pin']), u['pin'],
             u.get('limite_total', 0),
             u['limite_bn'], u['usado_bn'], u['limite_color'], u['usado_color'],
@@ -107,7 +130,6 @@ def encolar_registro_offline(payload):
 
 
 def reenviar_cola_offline():
-    """Sube al servidor los trabajos procesados mientras no había conexión."""
     conn = sqlite3.connect(RUTA_DB_OFFLINE)
     c = conn.cursor()
     c.execute("SELECT id, payload_json FROM cola_pendiente ORDER BY id ASC")
@@ -115,7 +137,7 @@ def reenviar_cola_offline():
     for reg_id, payload_str in pendientes:
         try:
             resp = requests.post(f"{URL_BASE}/api/validar-impresion/", json=json.loads(payload_str), timeout=4)
-            if resp.status_code in [200, 403]:
+            if resp.status_code in [200, 401, 403]:
                 c.execute("DELETE FROM cola_pendiente WHERE id = ?", (reg_id,))
                 conn.commit()
         except Exception:
@@ -124,7 +146,6 @@ def reenviar_cola_offline():
 
 
 def impresora_tiene_control_activo(nombre_imp):
-    """Verifica en la caché local si la impresora tiene el monitoreo activado."""
     try:
         conn = sqlite3.connect(RUTA_DB_OFFLINE)
         c = conn.cursor()
@@ -141,7 +162,6 @@ def impresora_tiene_control_activo(nombre_imp):
 
 
 def validar_en_modo_offline(usuario_so, documento, paginas, tipo_impresion):
-    """Evalúa reglas, cuotas (mixta e individuales) y PIN localmente cuando el servidor no responde."""
     conn = sqlite3.connect(RUTA_DB_OFFLINE)
     c = conn.cursor()
 
@@ -164,19 +184,21 @@ def validar_en_modo_offline(usuario_so, documento, paginas, tipo_impresion):
             conn.close()
             return {"permitir": False, "motivo": "Regla de Ahorro (Offline): Bloqueado color en correo/web."}
 
-    c.execute("SELECT * FROM usuarios_cache WHERE usuario_so = ?", (usuario_so,))
+    c.execute("""SELECT bloqueado, requiere_pin, pin, limite_total,
+                        limite_bn, usado_bn, limite_color, usado_color,
+                        depto_limite_bn, depto_usado_bn, depto_limite_color, depto_usado_color
+                 FROM usuarios_cache WHERE usuario_so = ?""", (usuario_so,))
     u = c.fetchone()
     if not u:
         conn.close()
         return {"permitir": True, "motivo": "Aprobado (Usuario nuevo en modo offline)"}
 
-    _, bloqueado, req_pin, pin, lim_total, lim_bn, uso_bn, lim_col, uso_col, d_lim_bn, d_uso_bn, d_lim_col, d_uso_col = u
+    bloqueado, req_pin, pin, lim_total, lim_bn, uso_bn, lim_col, uso_col, d_lim_bn, d_uso_bn, d_lim_col, d_uso_col = u
 
     if bloqueado:
         conn.close()
         return {"permitir": False, "motivo": "Usuario o departamento bloqueado (Modo Offline)"}
 
-    # Validar cuota general mixta (B/N + Color)
     if lim_total > 0 and (uso_bn + uso_col + paginas) > lim_total:
         conn.close()
         return {"permitir": False, "motivo": "Cuota General Mixta excedida (Modo Offline)"}
@@ -234,7 +256,7 @@ def consultar_snmp_impresora(ip):
         try:
             iterator = getCmd(
                 SnmpEngine(), CommunityData('public', mpModel=0),
-                UdpTransportTarget((ip, 161), timeout=1.0, retries=0),
+                UdpTransportTarget((ip, 161), timeout=0.8, retries=0),
                 ContextData(), ObjectType(ObjectIdentity(oid))
             )
             errorIndication, errorStatus, _, varBinds = next(iterator)
@@ -326,8 +348,8 @@ def obtener_impresoras_windows():
                 'nombre': nombre, 'puerto': puerto, 'ip_impresora': ip_imp,
                 'es_color': es_color, 'estado': estado, **snmp_info
             })
-        except Exception:
-            pass
+        except Exception as e:
+            logging.warning(f"Error leyendo impresora '{nombre}': {e}")
     return impresoras
 
 
@@ -346,8 +368,8 @@ def obtener_impresoras_linux():
                 'nombre': nombre, 'puerto': puerto, 'ip_impresora': ip_imp,
                 'es_color': es_color, 'estado': estado, **snmp_info
             })
-    except Exception:
-        pass
+    except Exception as e:
+        logging.warning(f"Error leyendo CUPS: {e}")
     return impresoras
 
 
@@ -367,9 +389,17 @@ def sincronizar_con_servidor():
             data = resp.json()
             guardar_cache_offline(data.get('reglas_empresa', {}), data.get('usuarios', []))
             reenviar_cola_offline()
-            print(f"[✓] Sincronizado y Caché Offline actualizada ({len(lista_impresoras)} impresoras)")
-    except Exception:
-        print("[!] Servidor sin conexión: operando en Modo Offline con caché local.")
+            msg = f"Sincronizado OK ({len(lista_impresoras)} impresoras, {len(data.get('usuarios', []))} usuarios en caché)"
+            print(f"[✓] {msg}")
+            logging.info(msg)
+        else:
+            msg = f"Error HTTP {resp.status_code} al sincronizar: {resp.text[:150]}"
+            print(f"[!] {msg}")
+            logging.error(msg)
+    except Exception as e:
+        msg = f"Servidor sin conexión ({URL_BASE}): {e}"
+        print(f"[!] {msg}")
+        logging.warning(msg)
 
 
 def consultar_permiso_impresion(impresora, usuario_so, documento, paginas, tipo_impresion):
@@ -385,7 +415,8 @@ def consultar_permiso_impresion(impresora, usuario_so, documento, paginas, tipo_
     try:
         resp = requests.post(f"{URL_BASE}/api/validar-impresion/", json=payload, timeout=4)
         return resp.json()
-    except Exception:
+    except Exception as e:
+        logging.warning(f"Validando offline por error de red: {e}")
         resultado_offline = validar_en_modo_offline(usuario_so, documento, paginas, tipo_impresion)
         encolar_registro_offline(payload)
         return resultado_offline
@@ -397,22 +428,55 @@ def vigilar_cola_windows():
         if not impresora_tiene_control_activo(nombre_imp):
             continue
 
+        handle = None
         try:
-            handle = win32print.OpenPrinter(nombre_imp)
-            trabajos = win32print.EnumJobs(handle, 0, -1, 2)
+            try:
+                handle = win32print.OpenPrinter(nombre_imp, {"DesiredAccess": win32print.PRINTER_ALL_ACCESS})
+            except Exception:
+                handle = win32print.OpenPrinter(nombre_imp)
 
+            trabajos = win32print.EnumJobs(handle, 0, -1, 2)
             for job in trabajos:
                 job_id = f"{nombre_imp}_{job['JobId']}"
                 if job_id in trabajos_procesados:
                     continue
 
-                win32print.SetJob(handle, job['JobId'], 0, None, win32print.JOB_CONTROL_PAUSE)
+                # 1. Pausar de inmediato antes de que salga a la impresora
+                try:
+                    win32print.SetJob(handle, job['JobId'], 0, None, win32print.JOB_CONTROL_PAUSE)
+                except Exception as e_pause:
+                    logging.error(f"No se pudo pausar trabajo {job_id} (¿falta ejecutar como Admin?): {e_pause}")
+                    trabajos_procesados.add(job_id)
+                    continue
 
-                usuario_so = job.get('pUserName', 'desconocido')
-                documento = job.get('pDocument', 'Sin nombre')
-                paginas = job.get('TotalPages', 1) or 1
-                devmode = job.get('pDevMode')
+                # Esperar hasta que Windows termine de recibir todas las páginas del archivo (Spooling)
+                job_actual = job
+                for _ in range(15):  # Máximo 1.5 segundos de espera
+                    try:
+                        job_actual = win32print.GetJob(handle, job['JobId'], 2)
+                        estado_spool = job_actual.get('Status', 0)
+                        pags_detectadas = job_actual.get('TotalPages', 0) or 0
+                        # Si ya terminó de hacer spooling (bit 0x00000008 = JOB_STATUS_SPOOLING) y tiene páginas
+                        if not (estado_spool & 0x00000008) and pags_detectadas > 0:
+                            break
+                    except Exception:
+                        break
+                    time.sleep(0.1)
+
+                paginas_doc = job_actual.get('TotalPages', 1) or 1
+                devmode = job_actual.get('pDevMode') or job.get('pDevMode')
+                copias = getattr(devmode, 'Copies', 1) if devmode else 1
+                if not copias or copias < 1:
+                    copias = 1
+
+                paginas = paginas_doc * copias
+
+                usuario_raw = job_actual.get('pUserName') or job.get('pUserName') or 'desconocido'
+                usuario_so = usuario_raw.split('\\')[-1].strip()
+                documento = job_actual.get('pDocument') or job.get('pDocument') or 'Sin nombre'
                 tipo_impresion = 'COLOR' if (devmode and getattr(devmode, 'Color', 1) == 2) else 'BN'
+
+                logging.info(f"Interceptado: imp='{nombre_imp}' user='{usuario_so}' doc='{documento}' pags={paginas} tipo={tipo_impresion}")
 
                 resp_json = consultar_permiso_impresion(nombre_imp, usuario_so, documento, paginas, tipo_impresion)
                 permitir = resp_json.get('permitir', False)
@@ -426,15 +490,22 @@ def vigilar_cola_windows():
 
                 if permitir:
                     win32print.SetJob(handle, job['JobId'], 0, None, win32print.JOB_CONTROL_RESUME)
+                    logging.info(f"Aprobado y reanudado: {job_id}")
                 else:
                     win32print.SetJob(handle, job['JobId'], 0, None, win32print.JOB_CONTROL_DELETE)
+                    logging.info(f"Bloqueado y eliminado: {job_id} -> {motivo}")
                     mostrar_aviso_bloqueo(documento, motivo)
 
                 trabajos_procesados.add(job_id)
 
-            win32print.ClosePrinter(handle)
-        except Exception:
-            pass
+        except Exception as e:
+            logging.error(f"Error vigilando cola '{nombre_imp}': {e}")
+        finally:
+            if handle:
+                try:
+                    win32print.ClosePrinter(handle)
+                except Exception:
+                    pass
 
 
 def vigilar_cola_linux():
@@ -475,13 +546,14 @@ def vigilar_cola_linux():
                 mostrar_aviso_bloqueo(documento, motivo)
 
             trabajos_procesados.add(job_id)
-    except Exception:
-        pass
+    except Exception as e:
+        logging.error(f"Error vigilando CUPS: {e}")
 
 
 if __name__ == '__main__':
     inicializar_db_offline()
-    print(f"=== Iniciando Agente PrintControl con Caché Offline en {NOMBRE_HOST} ({SISTEMA_OPERATIVO}) ===")
+    logging.info(f"Iniciando Agente en {NOMBRE_HOST} -> Servidor: {URL_BASE}")
+    print(f"=== Iniciando Agente PrintControl en {NOMBRE_HOST} ({SISTEMA_OPERATIVO}) ===")
     ultimo_sync = 0
 
     while True:
@@ -495,4 +567,4 @@ if __name__ == '__main__':
         elif SISTEMA_OPERATIVO == 'LINUX':
             vigilar_cola_linux()
 
-        time.sleep(0.5)
+        time.sleep(0.05)
